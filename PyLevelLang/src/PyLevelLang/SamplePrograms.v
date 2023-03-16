@@ -9,11 +9,33 @@ Require Import Lia.
 Import ListNotations.
 Import ResultMonadNotations.
 
+Require Import Coq.Program.Tactics.
+
 Local Open Scope Z_scope.
 Local Open Scope string_scope.
 Local Open Scope list_scope.
 
 Local Open Scope pylevel_scope.
+
+(*
+Fixpoint to_json (v : {t & interp_type t}) : string
+  := match projT1 v as t return (interp_type t -> string) with
+     | TBool => fun i => match i with
+                        | true => "true"
+                        | false => "false"
+                         end
+     | TInt => fun n => "123"
+     | TString => fun s => s
+     | TPair name t1 t2 => fun s =>
+         match s with
+         | (a, b) => append (append name ":") (to_json (existT interp_type t1 a))
+           end
+     | _ => fun i => ""
+     end (projT2 v).
+
+Compute to_json (existT interp_type (TPair "a" TString TBool) _).
+
+*)
 
 Section Square_Section.
   Instance tenv : map.map string (type * bool) := SortedListString.map _.
@@ -143,6 +165,39 @@ Section WithMap.
   Context {locals: map.map string {t & interp_type t}} {locals_ok: map.ok locals}.
   Context { tenv : map.map string (type * bool) }
           { tenv_ok : map.ok tenv }.
+
+
+  Lemma fold_left_loop (A : Type) (Q : locals -> Prop) (P : locals -> Prop) (lcls : locals) f (l : list A)
+   : Q lcls ->
+        (forall lcls' e,
+            In e l ->
+            Q lcls' ->
+            Q (f lcls' e)) ->
+        (forall lcls', Q lcls' -> P lcls') ->
+        P (fold_left f l lcls).
+  Proof.
+  Admitted.
+
+  (* TODO This should be in Coqutil *)
+  Lemma fold_left_ext (A B : Type) P (Q : B -> Prop) l (f g : A -> B -> A):
+    (forall x y, P x -> P (f x y)) ->
+    (forall x y, P x -> P (g x y)) ->
+    (forall x y,
+      P x -> Q y ->
+      f x y = g x y) ->
+    (forall a,
+      P a -> Forall Q l ->
+      fold_left f l a = fold_left g l a).
+  Proof.
+    intros H0 H1 H2.
+    induction l; try easy.
+    simpl.
+    intros.
+    inversion H; subst.
+    rewrite H2; try easy.
+    firstorder idtac.
+  Qed.
+
 
   Goal interp_command map.empty (isSquare_elaborated 0)
      = (map.put map.empty "ans" (existT interp_type Bool true)).
@@ -464,6 +519,57 @@ Section WithMap.
         rewrite map.remove_empty.
         reflexivity.
       - intros.
+
+        eapply fold_left_loop with
+          (Q := (fun (l : locals) => map.get l "ans" = Some (existT interp_type TBool false))).
+        {
+          erewrite fold_left_ext with
+            (P := (fun (l : locals) =>
+            map.get l "n" = Some (existT interp_type TInt (Z.of_nat (S x * S x)))))
+            (Q := (fun (n : Z) => n = Z.of_nat x)).
+
+          5:{
+            subst. rewrite map.get_put_same. reflexivity.
+            (*
+            exists (Z.of_nat n). rewrite map.get_put_same. simpl.
+            split.
+            - reflexivity.
+            - lia.
+             *)
+          }
+          4:{
+            intros x0 y get_n y_eq; subst.
+            rewrite map.get_put_same.
+            rewrite map.get_put_diff by congruence.
+            rewrite get_n.
+            cbn.
+
+            assert (forall x, ((Z.of_nat x * Z.of_nat x =? Z.pos (Pos.of_succ_nat (x + x * S x)))%Z) = false).
+            { intros. rewrite Z.eqb_neq. lia. }
+
+            rewrite H.
+            Locate Ltac rapply.
+            change
+              (map.put x0 "x" (existT interp_type Int (Z.of_nat x))) with
+              ((fun x0 x1 => map.put x0 "x" (existT interp_type Int x1)) x0 (Z.of_nat x)).
+
+            symmetry.
+            pattern x0, (Z.of_nat x).
+            (* Stuck here, possible bug? *)
+            apply f_equal. 
+            exact eq_refl.
+            apply f_equal.
+
+            reflexivity.
+          }
+
+          1:{
+            intros. rewrite map.get_put_same.
+            rewrite map.get_put_diff by congruence.
+            cbn.
+          }
+        }
+
         specialize (small_loop_false _ _ xSq) as IH.
         rewrite IH. clear IH.
 
